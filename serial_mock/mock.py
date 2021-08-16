@@ -13,18 +13,23 @@ import re
 import time
 
 import sys
-from cStringIO import StringIO
 
+try:
+    from StringIO import StringIO  ## for Python 2
+except ImportError:
+    from io import StringIO  ## for Python 3
 
 from serial_mock.decorators import QueryStore
 from serial_mock.kb_listen import KBListen
 import logging
-logging.basicConfig(stream=sys.stdout,format="%(levelname)s:%(funcName)s %(lineno)d:  %(message)s")
+
+logging.basicConfig(stream=sys.stdout, format="%(levelname)s:%(funcName)s %(lineno)d:  %(message)s")
 logger = logging.getLogger("serial_mock")
 
 
 class _StreamHelper(object):
     _exit = False
+
     @staticmethod
     def check_term(s, check_item):
         r"""
@@ -51,7 +56,7 @@ class _StreamHelper(object):
         :return: True or False depending on if the condition is met
         
         """
-        if isinstance(check_item, basestring):
+        if isinstance(check_item, str):
             return s.endswith(check_item)
         elif isinstance(check_item, re._pattern_type):
             return bool(check_item.search(s))
@@ -59,6 +64,7 @@ class _StreamHelper(object):
             return any(_StreamHelper.check_term(s, itm) for itm in check_item)
         else:
             raise Exception("Unknown Terminal Condition:%r" % check_item)
+
     @staticmethod
     def read_until(stream, terminal_condition):
         r"""
@@ -81,15 +87,16 @@ class _StreamHelper(object):
         :return: 
         """
         s = ""
-        _StreamHelper._exit=False
+        _StreamHelper._exit = False
         while not _StreamHelper._exit:
 
             if s and _StreamHelper.check_term(s, terminal_condition):
                 logger.debug("Response Complete(%s): %r (returning value)" % (getattr(stream, 'port', stream), s))
                 return s
             elif s:
-                logger.debug("Incomplete MSG(%s)(%r not found): %r (keep waiting)" % (getattr(stream, "port", stream), terminal_condition, s))
-            if not hasattr(stream,"inWaiting") or stream.inWaiting():
+                logger.debug("Incomplete MSG(%s)(%r not found): %r (keep waiting)" % (
+                    getattr(stream, "port", stream), terminal_condition, s))
+            if not hasattr(stream, "inWaiting") or stream.inWaiting():
                 MockSerial._LOCK.acquire()
                 try:
                     s += stream.read(1)
@@ -100,21 +107,22 @@ class _StreamHelper(object):
                     sys.exit(0)
                 time.sleep(0.25)
 
+
 class MockSerial(object):
     _hard_exit = False
     _LOCK = threading.Lock()
     #: any keys defined in **data** will automatically have getters or setters created for them
     data = {}
     #: the prefix to use with data auto generated routes
-    data_prefix="-"
+    data_prefix = "-"
     #: the **baudrate** we should operate at
-    baudrate=9600
+    baudrate = 9600
     #: the **prompt** to display to the user
-    prompt=">"
+    prompt = b">"
     #: **user_terminal** defines the character(or characters, or regexp, or list) of items that indicate our user has finished a command
-    delimiter="\r"
+    delimiter = "\r"
     #:**endline** defines the character to output after our response but before our prompt
-    endline="\r"
+    endline = "\r"
 
     logfile = None
 
@@ -123,8 +131,7 @@ class MockSerial(object):
     #: any other value type will be coerced to `str`
     simple_queries = {}
 
-
-    def __init__(self,stream,logfile=None,**kwargs):
+    def __init__(self, stream, logfile=None, **kwargs):
         """
             **MockSerial(stream:string)** instanciates a new MockStreamTunnel, stream should point to the comm port to listen on. 
             *in general this class should not be directly invoked but should be subclassed, you can find some examples in the examples folder, or in the cli.py file*
@@ -178,38 +185,40 @@ class MockSerial(object):
         super(MockSerial, self).__init__()
         for key in "data_prefix baudrate prompt delimiter endline".split():
             if key in kwargs:
-                setattr(self,key,kwargs.pop(key))
+                setattr(self, key, kwargs.pop(key))
         self.stream = stream
         if logfile:
-            if isinstance(logfile,basestring):
-                logfile = open(logfile,"wb")
+            if isinstance(logfile, str):
+                logfile = open(logfile, "wb")
             self.logfile = logfile
-        if isinstance(stream,basestring) and not stream == "DEBUG":
+        if isinstance(stream, str) and not stream == "DEBUG":
             try:
-                self.stream = serial.Serial(stream,self.baudrate)
+                self.stream = serial.Serial(stream, self.baudrate)
             except:
-                raise Exception("Unable To Bind To %r"%stream)
+                raise Exception("Unable To Bind To %r" % stream)
 
         for k in self.data:
-            QueryStore.register(lambda self,k=k:str(self.data.get(k,"None")),"get %s%s"%(self.data_prefix,k))
-            QueryStore.register(lambda self,value,k=k:self.data.update({k:value}) or "OK","set %s%s"%(self.data_prefix,k))
+            QueryStore.register(lambda self, k=k: str(self.data.get(k, "None")), "get %s%s" % (self.data_prefix, k))
+            QueryStore.register(lambda self, value, k=k: self.data.update({k: value}) or "OK",
+                                "set %s%s" % (self.data_prefix, k))
         self._simple_queries = {}
-        for k,v in self.simple_queries.items():
-            if isinstance(v,basestring):
-                self._simple_queries[k] = cycle([v,])
-            elif isinstance(v,(list,tuple)):
+        for k, v in self.simple_queries.items():
+            if isinstance(v, str):
+                self._simple_queries[k] = cycle([v, ])
+            elif isinstance(v, (list, tuple)):
                 self._simple_queries[k] = cycle(v)
             else:
                 self._simple_queries[k] = cycle([str(v), ])
 
-        if self.stream is "DEBUG":
-            logger.warn("Running in debug mode you may not run MainLoop!")
+        if self.stream == "DEBUG":
+            logger.warning("Running in debug mode you may not run MainLoop!")
         else:
-            assert hasattr(self.stream,"read") and hasattr(self.stream,"write"),"STREAM must provide a minimum of read and write"
-    @staticmethod
-    def _read_from_stream(stream,terminal):
-        return _StreamHelper.read_until(stream, terminal)
+            assert hasattr(self.stream, "read") and hasattr(self.stream,
+                                                            "write"), "STREAM must provide a minimum of read and write"
 
+    @staticmethod
+    def _read_from_stream(stream, terminal):
+        return _StreamHelper.read_until(stream, terminal)
 
     def process_cmd(self, cmd):
         """
@@ -226,48 +235,51 @@ class MockSerial(object):
         
         """
 
-        cmd = re.sub(".\x08","",cmd.strip())
+        cmd = re.sub(".\x08", "", cmd.strip())
         if self.logfile:
-            self.logfile.write("<%r\n"%(cmd,))
+            self.logfile.write("<%r\n" % (cmd,))
         if not cmd:
             return ""
         if cmd in self.simple_queries:
             result = next(self._simple_queries[cmd])
-            logger.debug("Simple Query Response:%r -> %r"%(cmd,result))
+            logger.debug("Simple Query Response:%r -> %r" % (cmd, result))
             return result
         try:
-            method,rest = QueryStore._find(cmd)
+            method, rest = QueryStore._find(cmd)
 
         except KeyError:
             traceback.print_exc()
-            return "ERROR %r Not Found"%cmd
+            return "ERROR %r Not Found" % cmd
         try:
-            logger.debug("calling function: %r"%method.__name__)
-            result = method(self,*rest)
-            logger.debug("%s returns: %r"%(method.__name__,result))
+            logger.debug("calling function: %r" % method.__name__)
+            result = method(self, *rest)
+            logger.debug("%s returns: %r" % (method.__name__, result))
             return result
         except Exception as e:
             traceback.print_exc()
-            return "ERROR %r : %s"%(cmd,e)
-    def _process_keydown(self,key):
-        result =  QueryStore._find_key_binding(key)
+            return "ERROR %r : %s" % (cmd, e)
+
+    def _process_keydown(self, key):
+        result = QueryStore._find_key_binding(key)
         if not result:
             return
         result(self)
-    def _write_to_stream(self,response):
-        if not response:return
+
+    def _write_to_stream(self, response):
+        if not response: return
         if self.logfile:
-            self.logfile.write(">%r\n"%(response,))
+            self.logfile.write(">%r\n" % (response,))
         self._LOCK.acquire()
         try:
-            self.stream.write("%s%s"%(response,self.endline))
+            self.stream.write("%s%s" % (response, self.endline))
         except:
             if self.stream == "DEBUG":
-                print("%s%s"%(response,self.endline))
+                print("%s%s" % (response, self.endline))
             else:
                 raise
         finally:
             self._LOCK.release()
+
     def terminate(self):
         """
         stop the MainLoop if running
@@ -277,7 +289,7 @@ class MockSerial(object):
         try:
             self.stream.close()
         except:
-            logger.warn("unable to close stream...skipping")
+            logger.warning("unable to close stream...skipping")
         if self.kb:
             self.kb.halt = True
         _StreamHelper._exit = True
@@ -294,9 +306,10 @@ class MockSerial(object):
         if QueryStore.__keybinds__:
             self.kb = KBListen(self._process_keydown)
             self.kb.Listen()
-        print "LISTENING ON:",self.stream
+        print("LISTENING ON:", self.stream)
 
         while self.running:
+            # TODO change to str ? or bytes
             self.stream.write(self.prompt)
             try:
                 cmd = self.process_cmd(self._read_from_stream(self.stream, self.delimiter))
@@ -341,7 +354,8 @@ class DummySerial(serial.Serial):
     _xonxoff = None
     _rtscts = None
     _dsrdtr = None
-    def __init__(self,MockSerialClass):
+
+    def __init__(self, MockSerialClass):
         self.myMock = MockSerialClass(StringIO())
         self.rx_buffer = ""
         self.tx_buffer = ""
@@ -350,8 +364,10 @@ class DummySerial(serial.Serial):
 
     def open(self):
         return True
+
     def close(self):
         return True
+
     @property
     def in_waiting(self):
         return self.inWaiting()
@@ -359,7 +375,7 @@ class DummySerial(serial.Serial):
     def inWaiting(self):
         return len(self.tx_buffer)
 
-    def write(self,msg):
+    def write(self, msg):
         self.rx_buffer += msg
         if _StreamHelper.check_term(self.rx_buffer, self.rx_buffer):
             self.myMock._write_to_stream(self.myMock.process_cmd(self.rx_buffer))
@@ -367,15 +383,17 @@ class DummySerial(serial.Serial):
             self.tx_buffer += self.myMock.stream.read() + self.myMock.prompt
             self.myMock.stream.truncate(0)
             self.rx_buffer = ""
-        return long(len(msg))
-    def read(self,bytes=1):
-        resp,self.tx_buffer =self.tx_buffer[:bytes],self.tx_buffer[bytes:]
+        return int(len(msg))
+
+    def read(self, bytes=1):
+        resp, self.tx_buffer = self.tx_buffer[:bytes], self.tx_buffer[bytes:]
         return resp
+
 
 class EmittingSerial(MockSerial):
     emit = "EMIT MSG"
-    delay = 5,35
-    interval = 15,35
+    delay = 5, 35
+    interval = 15, 35
 
     def __init__(self, stream, logfile=None, **kwargs):
         """
@@ -390,32 +408,33 @@ class EmittingSerial(MockSerial):
         super(EmittingSerial, self).__init__(stream, logfile, **kwargs)
 
     def _on_start_emit(self):
-        self.emit_timer = threading.Timer(random.uniform(*self.interval),self._on_emit)
+        self.emit_timer = threading.Timer(random.uniform(*self.interval), self._on_emit)
         self.emit_timer.start()
 
     def _on_emit(self):
         if self.running:
-          self._write_to_stream(self.emit)
-          self._on_start_emit()
-        
+            self._write_to_stream(self.emit)
+            self._on_start_emit()
+
     def MainLoop(self):
         self.emit_timer = threading.Timer(random.uniform(*self.delay), self._on_start_emit)
         self.emit_timer.start()
         MockSerial.MainLoop(self)
         try:
-          # self.timer might have already fired and not been re-started
-          self.emit_timer.cancel()
+            # self.timer might have already fired and not been re-started
+            self.emit_timer.cancel()
         except:
-          pass
+            pass
+
 
 if __name__ == "__main__":
     class TestClass(MockSerial):
         @QueryStore("hello")
-        def say_hello(self,name="BOB"):
-            return "Hello, %s"%name
+        def say_hello(self, name="BOB"):
+            return "Hello, %s" % name
+
 
     d = DummySerial(TestClass)
-    print isinstance(d,serial.Serial),d
-    print "sent:",repr(d.write("hello joey\r"))
-    print "RECV:",repr(d.read(d.inWaiting()))
-
+    print(isinstance(d, serial.Serial), d)
+    print("sent:", repr(d.write("hello joey\r")))
+    print("RECV:", repr(d.read(d.inWaiting())))
